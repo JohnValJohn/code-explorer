@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { readFileAtPath } from "../fs/readFile.ts";
-import { isLocalSource, parseImports, type ImportEntry } from "./parseImports.ts";
+import { parseSource } from "../parser/parseSource.ts";
+import { isLocalSource, listImports, type ImportEntry } from "./listImports.ts";
 
 type ImportsState =
   | { status: "loading" }
-  | { status: "ready"; imports: ImportEntry[] }
+  | { status: "ready"; imports: ImportEntry[]; syntaxErrors: number }
   | { status: "error"; message: string };
 
 const KIND_LABELS: Record<ImportEntry["kind"], string | null> = {
@@ -26,14 +27,20 @@ export function PageImports({ root, path, onClose }: PageImportsProps) {
 
   useEffect(() => {
     let cancelled = false;
-    readFileAtPath(root, path).then(
-      (code) => {
-        if (!cancelled) setState({ status: "ready", imports: parseImports(code) });
-      },
-      (error: unknown) => {
+    void (async () => {
+      try {
+        const code = await readFileAtPath(root, path);
+        const { module, errors } = await parseSource(path, code);
+        if (cancelled) return;
+        setState({
+          status: "ready",
+          imports: listImports(module, code),
+          syntaxErrors: errors.filter((error) => error.severity === "Error").length,
+        });
+      } catch (error) {
         if (!cancelled) setState({ status: "error", message: String(error) });
-      },
-    );
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -58,6 +65,12 @@ export function PageImports({ root, path, onClose }: PageImportsProps) {
       </header>
 
       {state.status === "error" && <p className="notice error">{state.message}</p>}
+      {state.status === "ready" && state.syntaxErrors > 0 && (
+        <p className="notice error">
+          {state.syntaxErrors} syntax {state.syntaxErrors === 1 ? "error" : "errors"} in this file;
+          the list may be incomplete.
+        </p>
+      )}
       {state.status === "ready" && state.imports.length === 0 && (
         <p className="notice">This page has no imports.</p>
       )}
