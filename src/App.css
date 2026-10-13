@@ -1,5 +1,5 @@
 .app {
-  max-width: 960px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 24px 16px;
   display: flex;
@@ -85,6 +85,25 @@ button:hover {
   border-top: 1px solid var(--border);
 }
 
+.result {
+  display: block;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.result:hover {
+  background: var(--code-bg);
+}
+
+.result[aria-pressed="true"] {
+  background: var(--accent-bg);
+  box-shadow: inset 3px 0 var(--accent);
+}
+
 .results code {
   display: block;
   padding: 6px 12px;
@@ -97,4 +116,102 @@ button:hover {
   color: inherit;
   background: var(--accent-bg);
   box-shadow: inset 0 -2px var(--accent);
+}
+
+.workspace {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .workspace.has-selection {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .imports {
+    position: sticky;
+    top: 12px;
+    max-height: calc(100vh - 24px);
+    overflow: auto;
+  }
+}
+
+.imports {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.imports-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.imports-header h2 {
+  margin: 0;
+  font: 600 14px/1.4 var(--mono);
+  color: var(--text-h);
+  overflow-wrap: anywhere;
+}
+
+.imports .notice {
+  margin: 12px;
+}
+
+.import-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.import-list li {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.import-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.import-source {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.import-source code {
+  font: 14px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.import-source .package {
+  color: var(--accent);
+}
+
+.import-source .local {
+  color: var(--text-h);
+}
+
+.import-names {
+  font: 13px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.tag {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.line {
+  margin-left: auto;
+  font: 12px var(--mono);
 }

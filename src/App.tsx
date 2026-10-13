@@ -2,6 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { loadRootHandle, saveRootHandle } from "./fs/handleStore.ts";
 import { PAGE_FILE_NAME, scanPages } from "./fs/scanPages.ts";
 import { filterPaths, type PathMatch } from "./search/filterPaths.ts";
+import { PageImports } from "./imports/PageImports.tsx";
 import "./App.css";
 
 // Rendering thousands of rows at once makes typing sluggish.
@@ -20,6 +21,7 @@ const isSupported = typeof window.showDirectoryPicker === "function";
 function App() {
   const [folder, setFolder] = useState<FolderState>({ status: "empty" });
   const [query, setQuery] = useState("");
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query);
 
   useEffect(() => {
@@ -42,6 +44,7 @@ function App() {
 
   async function scan(handle: FileSystemDirectoryHandle) {
     setFolder({ status: "scanning", handle });
+    setSelectedPath(null);
     try {
       const paths = await scanPages(handle);
       setFolder({ status: "ready", handle, paths });
@@ -122,13 +125,30 @@ function App() {
             {matches.length} of {paths.length} {PAGE_FILE_NAME} files
             {matches.length > MAX_VISIBLE_RESULTS && ` (showing first ${MAX_VISIBLE_RESULTS})`}
           </p>
-          <ul className="results">
-            {matches.slice(0, MAX_VISIBLE_RESULTS).map((match) => (
-              <li key={match.path}>
-                <HighlightedPath match={match} />
-              </li>
-            ))}
-          </ul>
+          <div className={selectedPath ? "workspace has-selection" : "workspace"}>
+            <ul className="results">
+              {matches.slice(0, MAX_VISIBLE_RESULTS).map((match) => (
+                <li key={match.path}>
+                  <button
+                    type="button"
+                    className="result"
+                    aria-pressed={match.path === selectedPath}
+                    onClick={() => setSelectedPath(match.path)}
+                  >
+                    <HighlightedPath match={match} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {selectedPath && (
+              <PageImports
+                key={selectedPath}
+                root={folder.handle}
+                path={selectedPath}
+                onClose={() => setSelectedPath(null)}
+              />
+            )}
+          </div>
         </>
       )}
     </main>
