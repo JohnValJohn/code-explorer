@@ -7,21 +7,12 @@ export interface PathMatch {
 
 /**
  * Case-insensitive substring match on the full path. An empty (or
- * whitespace-only) query returns every path unhighlighted, with `pinned`
- * moved to the top when it's one of them.
+ * whitespace-only) query returns every path unhighlighted.
  */
-export function filterPaths(
-  paths: readonly string[],
-  query: string,
-  pinned?: string | null,
-): PathMatch[] {
+export function filterPaths(paths: readonly string[], query: string): PathMatch[] {
   const needle = query.trim().toLowerCase();
   if (needle === "") {
-    const ordered =
-      pinned != null && paths.includes(pinned)
-        ? [pinned, ...paths.filter((path) => path !== pinned)]
-        : paths;
-    return ordered.map((path) => ({ path, start: -1, end: -1 }));
+    return paths.map((path) => ({ path, start: -1, end: -1 }));
   }
 
   const matches: PathMatch[] = [];
@@ -32,4 +23,21 @@ export function filterPaths(
     }
   }
   return matches;
+}
+
+/**
+ * Splits `matches` into the recently visited ones, in `recent` order, and the
+ * remaining ones, in their original order.
+ */
+export function splitRecent(
+  matches: readonly PathMatch[],
+  recent: readonly string[],
+): { recent: PathMatch[]; others: PathMatch[] } {
+  const byPath = new Map(matches.map((match) => [match.path, match]));
+  const recentMatches = recent.flatMap((path) => byPath.get(path) ?? []);
+  const recentSet = new Set(recent);
+  return {
+    recent: recentMatches,
+    others: matches.filter((match) => !recentSet.has(match.path)),
+  };
 }

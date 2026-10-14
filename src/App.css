@@ -68,6 +68,20 @@ button:hover {
   font-size: 13px;
 }
 
+.result-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.result-group h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .results {
   list-style: none;
   margin: 0;

@@ -1,8 +1,8 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { loadRootHandle, saveRootHandle } from "./fs/handleStore.ts";
 import { PAGE_FILE_NAME, scanRepository } from "./fs/scanPages.ts";
-import { loadSelectedPath, saveSelectedPath } from "./fs/selectionStore.ts";
-import { filterPaths, type PathMatch } from "./search/filterPaths.ts";
+import { addRecentPath, loadRecentPaths, saveRecentPaths } from "./fs/recentStore.ts";
+import { filterPaths, splitRecent, type PathMatch } from "./search/filterPaths.ts";
 import { ComponentGraph } from "./graph/ComponentGraph.tsx";
 import "./App.css";
 
@@ -27,8 +27,8 @@ const isSupported = typeof window.showDirectoryPicker === "function";
 function App() {
   const [folder, setFolder] = useState<FolderState>({ status: "empty" });
   const [query, setQuery] = useState("");
-  // The last visited page, pinned at the top of the list.
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // The last visited pages, most recent first, listed above the other pages.
+  const [recentPaths, setRecentPaths] = useState<string[]>([]);
   // The page whose graph is shown full-width, hiding the list.
   const [openPath, setOpenPath] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query);
@@ -53,16 +53,15 @@ function App() {
 
   async function scan(handle: FileSystemDirectoryHandle) {
     setFolder({ status: "scanning", handle });
-    setSelectedPath(null);
+    setRecentPaths([]);
     setOpenPath(null);
     try {
       const { pages: paths, packageDirs } = await scanRepository(handle);
       setFolder({ status: "ready", handle, paths, packageDirs });
-      const savedPath = loadSelectedPath();
-      if (savedPath !== null && paths.includes(savedPath)) {
-        setSelectedPath(savedPath);
-        setOpenPath(savedPath);
-      }
+      const pathSet = new Set(paths);
+      const recent = loadRecentPaths().filter((path) => pathSet.has(path));
+      setRecentPaths(recent);
+      if (recent.length > 0) setOpenPath(recent[0]);
     } catch (error) {
       setFolder({ status: "error", message: String(error) });
     }
@@ -72,7 +71,7 @@ function App() {
     try {
       const handle = await window.showDirectoryPicker!({ id: "code-explorer", mode: "read" });
       await saveRootHandle(handle);
-      saveSelectedPath(null);
+      saveRecentPaths([]);
       setQuery("");
       await scan(handle);
     } catch (error) {
@@ -89,15 +88,17 @@ function App() {
   }
 
   function openPage(path: string) {
-    setSelectedPath(path);
+    const recent = addRecentPath(recentPaths, path);
+    setRecentPaths(recent);
     setOpenPath(path);
-    saveSelectedPath(path);
+    saveRecentPaths(recent);
   }
 
   const paths = folder.status === "ready" ? folder.paths : NO_PATHS;
-  const matches = useMemo(
-    () => filterPaths(paths, deferredQuery, selectedPath),
-    [paths, deferredQuery, selectedPath],
+  const matches = useMemo(() => filterPaths(paths, deferredQuery), [paths, deferredQuery]);
+  const { recent: recentMatches, others: otherMatches } = useMemo(
+    () => splitRecent(matches, recentPaths),
+    [matches, recentPaths],
   );
 
   if (!isSupported) {
@@ -158,25 +159,55 @@ function App() {
           />
           <p className="count">
             {matches.length} of {paths.length} {PAGE_FILE_NAME} files
-            {matches.length > MAX_VISIBLE_RESULTS && ` (showing first ${MAX_VISIBLE_RESULTS})`}
+            {otherMatches.length > MAX_VISIBLE_RESULTS &&
+              ` (showing first ${MAX_VISIBLE_RESULTS} of the rest)`}
           </p>
-          <ul className="results">
-            {matches.slice(0, MAX_VISIBLE_RESULTS).map((match) => (
-              <li key={match.path}>
-                <button
-                  type="button"
-                  className="result"
-                  aria-pressed={match.path === selectedPath}
-                  onClick={() => openPage(match.path)}
-                >
-                  <HighlightedPath match={match} />
-                </button>
-              </li>
-            ))}
-          </ul>
+          {recentMatches.length > 0 && (
+            <section className="result-group">
+              <h2>Recently visited</h2>
+              <ResultList matches={recentMatches} lastVisited={recentPaths[0]} onOpen={openPage} />
+            </section>
+          )}
+          {otherMatches.length > 0 && (
+            <section className="result-group">
+              {recentMatches.length > 0 && <h2>All pages</h2>}
+              <ResultList
+                matches={otherMatches.slice(0, MAX_VISIBLE_RESULTS)}
+                lastVisited={recentPaths[0]}
+                onOpen={openPage}
+              />
+            </section>
+          )}
         </>
       )}
     </main>
+  );
+}
+
+function ResultList({
+  matches,
+  lastVisited,
+  onOpen,
+}: {
+  matches: PathMatch[];
+  lastVisited: string | undefined;
+  onOpen: (path: string) => void;
+}) {
+  return (
+    <ul className="results">
+      {matches.map((match) => (
+        <li key={match.path}>
+          <button
+            type="button"
+            className="result"
+            aria-pressed={match.path === lastVisited}
+            onClick={() => onOpen(match.path)}
+          >
+            <HighlightedPath match={match} />
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
