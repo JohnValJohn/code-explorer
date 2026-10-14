@@ -11,19 +11,22 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { tryReadFileAtPath } from "../fs/readFile.ts";
-import { createProject } from "../resolve/project.ts";
+import { createProject, DIALOG_REGISTRIES, type ComponentLocation } from "../resolve/project.ts";
 import { findPage } from "../routes/findPage.ts";
 import {
   branchPaths,
   canExpand,
   layoutTree,
+  loadTarget,
   nodeLabel,
   NODE_HEIGHT,
   pageTree,
   pendingLoads,
   restoreTree,
   ROOT_ID,
+  targetKey,
   type Children,
+  type LoadTarget,
   type Tree,
   type TreeNode,
 } from "./tree.ts";
@@ -74,14 +77,26 @@ export function ComponentGraph({
   const [tree, setTree] = useState<Tree>(initial);
 
   const load = useCallback(
-    async (id: string, file: string) => {
+    async (id: string, { path: file, dialogKey }: LoadTarget) => {
       const setChildren = (children: Children) =>
         setTree((tree) => ({ ...tree, [id]: { ...tree[id], children } }));
       setChildren({ status: "loading" });
       try {
-        const { components, syntaxErrors } = await project.listComponents(file);
+        const { components, syntaxErrors } =
+          dialogKey === undefined
+            ? await project.listComponents(file)
+            : await project.listDialogComponents(file, dialogKey);
         const locations = await Promise.all(
-          components.map((component) => project.locate(file, component)),
+          components.map(async (component): Promise<ComponentLocation> => {
+            // `openDialog(DialogKey.card)`: the registry with the `card` dialog,
+            // preferring the caller's package, then the page's (its sport).
+            if (component.dialogKey === undefined) return project.locate(file, component);
+            const registry =
+              component.dialogKey === null
+                ? null
+                : await project.findDialog(component.dialogKey, [file, path]);
+            return registry === null ? { kind: "unresolved" } : { kind: "file", path: registry };
+          }),
         );
         // `to={generatePath(ROUTES.PLAYER, …)}`: the route constant it's built from.
         const routes = await Promise.all(
@@ -102,10 +117,15 @@ export function ComponentGraph({
               name: component.name,
               source: component.import.source,
               location,
-              cycle: location.kind === "file" && openPaths.has(location.path),
+              cycle: false,
               expanded: false,
               children: { status: "idle" },
             };
+            if (component.dialogKey !== undefined) {
+              next[childId].dialog = { key: component.dialogKey };
+            }
+            const target = loadTarget(next[childId]);
+            next[childId].cycle = target !== null && openPaths.has(targetKey(target));
             const to = routes[index];
             if (to !== undefined) {
               const page = to === null ? null : findPage(to, path, pages, packageDirs);
@@ -124,7 +144,7 @@ export function ComponentGraph({
   );
 
   useEffect(() => {
-    for (const { id, path } of pendingLoads(initial)) void load(id, path);
+    for (const { id, ...target } of pendingLoads(initial)) void load(id, target);
   }, [initial, load]);
 
   const toggle = useCallback(
@@ -134,10 +154,11 @@ export function ComponentGraph({
         if (node.navigate.page !== null) onFollow(node.navigate.page, tree);
         return;
       }
-      if (!canExpand(node) || node.location.kind !== "file") return;
+      const target = loadTarget(node);
+      if (!canExpand(node) || target === null) return;
       setTree((tree) => ({ ...tree, [id]: { ...tree[id], expanded: !tree[id].expanded } }));
       if (!node.expanded && (node.children.status === "idle" || node.children.status === "error")) {
-        void load(id, node.location.path);
+        void load(id, target);
       }
     },
     [tree, load, onFollow],
@@ -228,7 +249,9 @@ function ComponentNode({ data: { node } }: NodeProps<ComponentFlowNode>) {
           : "navigate"
         : node.cycle
           ? "cycle"
-          : node.location.kind;
+          : node.dialog
+            ? `dialog ${node.location.kind}`
+            : node.location.kind;
   const content = (
     <>
       <span className="graph-node-name">{nodeLabel(node)}</span>
@@ -291,6 +314,18 @@ function describe(node: TreeNode): string {
     if (page === null) return `No page matches ${to}`;
     return `Opens ${page}`;
   }
+  if (node.dialog) {
+    const { key } = node.dialog;
+    const lines =
+      key === null
+        ? ["Couldn't find a static DialogKey to open"]
+        : node.location.kind === "file"
+          ? [`Opens the ${key} dialog of ${node.location.path}`]
+          : [`No ${key} dialog in ${DIALOG_REGISTRIES.join(", ")}`];
+    if (node.cycle) lines.push("Already open higher up this branch");
+    if (node.children.status === "error") lines.push(node.children.message);
+    return lines.join("\n");
+  }
   const lines = [node.source];
   if (node.location.kind === "file" && node.location.path !== node.source) {
     lines.push(node.location.path);
@@ -312,6 +347,7 @@ function Legend() {
       <li className="graph-node unresolved">not found</li>
       <li className="graph-node cycle">cycle</li>
       <li className="graph-node navigate">navigate</li>
+      <li className="graph-node dialog">dialog</li>
     </ul>
   );
 }

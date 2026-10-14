@@ -14,10 +14,13 @@ export interface ComponentImport {
 export interface RenderedComponent {
   /**
    * As written in JSX: `Button`, `UI.Card`, `motion.div`; or the function
-   * from `useNavigate()` that is called, e.g. `navigate()`.
+   * from `useNavigate()` or `useOpenDialog()` that is called, e.g. `navigate()`.
    */
   name: string;
-  /** The import of the component's root binding (`UI` for `UI.Card`), or of `useNavigate`. */
+  /**
+   * The import of the component's root binding (`UI` for `UI.Card`), of the
+   * `lazy(() => import(…))` call it's declared with, or of the hook.
+   */
   import: ComponentImport;
   /** How many times the component is rendered. */
   count: number;
@@ -32,6 +35,12 @@ export interface RenderedComponent {
   navigateTo?: string | null;
   /** When `navigateTo` is null: the imported values `to` is computed from, in source order. */
   routeReferences?: RouteReference[];
+  /**
+   * For `openDialog(DialogKey.card, …)` calls from `useOpenDialog()`: the key
+   * of the dialog opened (`card`), or null when it isn't static. Each distinct
+   * key is listed separately.
+   */
+  dialogKey?: string | null;
 }
 
 /** An imported value used in an expression, e.g. `ROUTES.player.show` → `ROUTES` + `["player", "show"]`. */
@@ -43,6 +52,7 @@ export interface RouteReference {
 
 export const NAVIGATE_COMPONENT = "Navigate";
 export const NAVIGATE_HOOK = "useNavigate";
+export const OPEN_DIALOG_HOOK = "useOpenDialog";
 
 type AstNode = { type: string; [key: string]: unknown };
 
@@ -80,6 +90,54 @@ function staticRoute(expression: AstNode | null | undefined): string | null {
     default:
       return null;
   }
+}
+
+/** `DialogKey.card` or `"card"` → `card`. */
+function staticDialogKey(expression: AstNode): string | null {
+  if (expression.type === "MemberExpression" && !expression.computed) {
+    return (expression.property as AstNode).name as string;
+  }
+  if (expression.type === "Literal" && typeof expression.value === "string") {
+    return expression.value;
+  }
+  return null;
+}
+
+/**
+ * The import a `lazy(() => import("./Dialog"), "Dialog")` call loads: React's
+ * `lazy` (the default export) or a helper taking the export name second.
+ */
+function lazyImport(init: AstNode | null): ComponentImport | null {
+  if (init?.type !== "CallExpression") return null;
+  const callee = init.callee as AstNode;
+  const calleeName =
+    callee.type === "Identifier"
+      ? callee.name
+      : callee.type === "MemberExpression" && !callee.computed
+        ? (callee.property as AstNode).name
+        : null;
+  if (calleeName !== "lazy") return null;
+  const [factory, exportName] = init.arguments as AstNode[];
+  let source: string | null = null;
+  walk(factory, (node) => {
+    const specifier = node.source as AstNode | undefined;
+    if (
+      source === null &&
+      node.type === "ImportExpression" &&
+      specifier?.type === "Literal" &&
+      typeof specifier.value === "string"
+    ) {
+      source = specifier.value;
+    }
+  });
+  if (source === null) return null;
+  return {
+    source,
+    importedName:
+      exportName?.type === "Literal" && typeof exportName.value === "string"
+        ? exportName.value
+        : "default",
+  };
 }
 
 /** The expression passed as `to`, or null without one. */
@@ -174,14 +232,18 @@ function walk(node: unknown, visit: (node: AstNode & { start: number }) => void)
 /**
  * Lists the imported components a file renders in JSX, in order of first
  * render, each with the import it comes from. Components defined in the file
- * itself are left out. Calls to the function returned by `useNavigate()` are
- * listed alongside, as they lead to other pages too.
+ * itself are left out, but `lazy(() => import(…))` ones are listed as imports.
+ * Calls to the functions returned by `useNavigate()` and `useOpenDialog()` are
+ * listed alongside, as they lead to other pages and dialogs too.
  * `program` and `module` come from an oxc-parser result for `code`.
+ * With `within`, only renders in that node count, plus those of the
+ * components defined in the file that it renders.
  */
 export function listComponents(
   program: Program,
   module: EcmaScriptModule,
   code: string,
+  within?: unknown,
 ): RenderedComponent[] {
   const imports = new Map<string, ComponentImport>();
   for (const statement of module.staticImports) {
@@ -215,23 +277,28 @@ export function listComponents(
   const isNavigate = (name: string) =>
     name === NAVIGATE_COMPONENT || imports.get(name)?.importedName === NAVIGATE_COMPONENT;
 
-  // `const navigate = useNavigate()`: the variables holding a navigate function,
-  // with the hook's import.
+  // `const navigate = useNavigate()`, `const openDialog = useOpenDialog()`: the
+  // variables holding a navigate or open dialog function, with the hook's import.
   const navigateFunctions = new Map<string, ComponentImport>();
-  const isNavigateHook = (name: string) =>
-    imports.has(name) &&
-    (name === NAVIGATE_HOOK || imports.get(name)!.importedName === NAVIGATE_HOOK);
+  const openDialogFunctions = new Map<string, ComponentImport>();
+  const isHook = (name: string, hook: string) =>
+    imports.has(name) && (name === hook || imports.get(name)!.importedName === hook);
+  // `const Dialog = lazy(() => import("./Dialog"), "Dialog")`, rendered like an import.
+  const lazyComponents = new Map<string, ComponentImport>();
   walk(program, (node) => {
     if (node.type !== "VariableDeclarator" || (node.id as AstNode).type !== "Identifier") return;
+    const name = (node.id as AstNode).name as string;
     const init = node.init as AstNode | null;
     const callee = init?.type === "CallExpression" ? (init.callee as AstNode) : null;
-    if (callee?.type === "Identifier" && isNavigateHook(callee.name as string)) {
-      navigateFunctions.set(
-        (node.id as AstNode).name as string,
-        imports.get(callee.name as string)!,
-      );
+    if (callee?.type === "Identifier") {
+      const hook = callee.name as string;
+      if (isHook(hook, NAVIGATE_HOOK)) navigateFunctions.set(name, imports.get(hook)!);
+      if (isHook(hook, OPEN_DIALOG_HOOK)) openDialogFunctions.set(name, imports.get(hook)!);
     }
+    const lazy = lazyImport(init);
+    if (lazy && !imports.has(name)) lazyComponents.set(name, lazy);
   });
+  for (const [name, lazy] of lazyComponents) imports.set(name, lazy);
 
   // Keyed by name, plus the target for navigations.
   const found = new Map<
@@ -241,10 +308,32 @@ export function listComponents(
       import: ComponentImport;
       navigateTo?: string | null;
       routeReferences?: RouteReference[];
+      dialogKey?: string | null;
       start: number;
       count: number;
     }
   >();
+  function recordDialog(
+    name: string,
+    imported: ComponentImport,
+    start: number,
+    key: string | null,
+  ) {
+    const id = `${name}\0dialog:${key ?? ""}`;
+    const seen = found.get(id);
+    if (seen) {
+      seen.count++;
+      seen.start = Math.min(seen.start, start);
+    } else {
+      found.set(id, {
+        name,
+        import: imported,
+        dialogKey: key,
+        start,
+        count: 1,
+      });
+    }
+  }
   /** `route` is the expression navigated to, or undefined for a plain component. */
   function record(
     name: string,
@@ -282,23 +371,41 @@ export function listComponents(
     }
   }
 
-  walk(program, (node) => {
+  // Components defined in the file whose renders were added, with `within`.
+  const followed = new Set<string>();
+  // `at` is where the render counts as made: for renders inside a component
+  // defined in the file, where that component is rendered within `within`.
+  function visit(node: AstNode & { start: number }, at = node.start): void {
     if (node.type === "JSXOpeningElement") {
       const name = componentName((node as unknown as { name: JSXElementName }).name);
-      const imported = name === null ? undefined : imports.get(name.split(".")[0]);
-      if (name === null || !imported) return;
+      if (name === null) return;
+      const imported = imports.get(name.split(".")[0]);
+      if (!imported) {
+        if (within !== undefined && !name.includes(".") && !followed.has(name)) {
+          followed.add(name);
+          const definition = getDeclarations().get(name) ?? functionDeclaration(program, name);
+          if (definition) walk(definition, (inner) => visit(inner, at));
+        }
+        return;
+      }
       const route = isNavigate(name) ? toExpression(node.attributes as AstNode[]) : undefined;
-      record(name, imported, node.start, route);
+      record(name, imported, at, route);
     } else if (node.type === "CallExpression") {
-      // `navigate(ROUTE)`; `navigate(-1)` goes back in history, which isn't a page.
       const callee = node.callee as AstNode;
-      if (callee.type !== "Identifier" || !navigateFunctions.has(callee.name as string)) return;
-      const [route] = node.arguments as AstNode[];
-      if (!route || route.type === "UnaryExpression" || typeof route.value === "number") return;
+      if (callee.type !== "Identifier") return;
       const name = callee.name as string;
-      record(`${name}()`, navigateFunctions.get(name)!, node.start, route);
+      const [argument] = node.arguments as AstNode[];
+      if (!argument) return;
+      if (navigateFunctions.has(name)) {
+        // `navigate(ROUTE)`; `navigate(-1)` goes back in history, which isn't a page.
+        if (argument.type === "UnaryExpression" || typeof argument.value === "number") return;
+        record(`${name}()`, navigateFunctions.get(name)!, at, argument);
+      } else if (openDialogFunctions.has(name)) {
+        recordDialog(`${name}()`, openDialogFunctions.get(name)!, at, staticDialogKey(argument));
+      }
     }
-  });
+  }
+  walk(within ?? program, (node) => visit(node));
 
   const sorted = [...found.values()].sort((a, b) => a.start - b.start);
 
@@ -309,6 +416,21 @@ export function listComponents(
     for (; cursor < start; cursor++) if (code[cursor] === "\n") line++;
     return { ...component, line };
   });
+}
+
+/** The `function name() {…}` declared anywhere in `program`. */
+function functionDeclaration(program: Program, name: string): AstNode | null {
+  let found: AstNode | null = null;
+  walk(program, (node) => {
+    if (
+      found === null &&
+      node.type === "FunctionDeclaration" &&
+      (node.id as AstNode | null)?.name === name
+    ) {
+      found = node;
+    }
+  });
+  return found;
 }
 
 /** Relative paths and common path aliases (`@/`, `~/`, `#`) point into the repo. */

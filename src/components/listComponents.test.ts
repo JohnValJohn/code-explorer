@@ -160,3 +160,40 @@ describe("listComponents with useNavigate", () => {
     ]);
   });
 });
+
+describe("listComponents with useOpenDialog", () => {
+  it("lists each openDialog() call by dialog key", () => {
+    expect(
+      componentsOf([
+        `import { useOpenDialog } from "@sorare/core/src/hooks/navigation/useOpenDialog";`,
+        `import { DialogKey } from "@sorare/core/src/components/navigation/WithDialogs";`,
+        `export default function Page({ slug, tab }) {`,
+        `  const openDialog = useOpenDialog();`,
+        `  const open = () => openDialog(DialogKey.card, slug);`,
+        `  return <button onClick={() => { openDialog(DialogKey.card, "x"); openDialog(tab, "1"); openDialog("news", "1"); openDialog(); }} />;`,
+        `}`,
+      ]).map(({ name, dialogKey, count, line }) => ({ name, dialogKey, count, line })),
+    ).toEqual([
+      { name: "openDialog()", dialogKey: "card", count: 2, line: 5 },
+      { name: "openDialog()", dialogKey: null, count: 1, line: 6 },
+      { name: "openDialog()", dialogKey: "news", count: 1, line: 6 },
+    ]);
+  });
+});
+
+describe("listComponents with lazy components", () => {
+  it("lists them as imports of the module they load", () => {
+    expect(
+      componentsOf([
+        `import { lazy } from "@/lib/retry";`,
+        `import React from "react";`,
+        `const Dialog = lazy(async () => import("./Dialog"), "Dialog");`,
+        `const Other = React.lazy(() => import("./Other"));`,
+        `export default () => <><Dialog /><Other /></>;`,
+      ]).map(({ name, import: imported }) => ({ name, imported })),
+    ).toEqual([
+      { name: "Dialog", imported: { source: "./Dialog", importedName: "Dialog" } },
+      { name: "Other", imported: { source: "./Other", importedName: "default" } },
+    ]);
+  });
+});

@@ -250,3 +250,68 @@ describe("resolveRoute", () => {
     ).toEqual([null]);
   });
 });
+
+describe("dialogs", () => {
+  const registry = "packages/gameplay/src/contexts/dialogs/index.tsx";
+  const files = {
+    [registry]: [
+      `import { Suspense } from "react";`,
+      `import { DialogKey, WithDialogs } from "../../WithDialogs";`,
+      `import { lazy } from "../../retry";`,
+      `import { CardPage } from "../../CardPage";`,
+      `import { NewsDialog } from "../../NewsDialog";`,
+      `const PackDialog = lazy(async () => import("../../PackDialog"), "PackDialog");`,
+      `const RoutedPackDialog = () => <PackDialog open />;`,
+      `const RoutedNewsDialog = () => <NewsDialog />;`,
+      `export const DialogsProvider = ({ children }) => (`,
+      `  <WithDialogs dialogs={[`,
+      `    { name: DialogKey.card, element: <Suspense><CardPage /></Suspense> },`,
+      `    { name: DialogKey.packDetails, element: <RoutedPackDialog /> },`,
+      `    { name: DialogKey.news, element: <Suspense><RoutedNewsDialog /></Suspense> },`,
+      `  ]}>{children}</WithDialogs>`,
+      `);`,
+    ].join("\n"),
+    "packages/gameplay/src/PackDialog.tsx": `export const PackDialog = () => null;`,
+    "packages/football/src/pages/index.tsx": `export default () => <WithDialogs dialogs={[{ name: DialogKey.game, element: <Game /> }]} />;`,
+    "packages/nba/src/pages/index.tsx": `export default () => <WithDialogs dialogs={[{ name: DialogKey.game, element: <Game /> }]} />;`,
+  };
+
+  it("finds the registry with a dialog for a key", async () => {
+    const project = projectOf(files);
+    expect(await project.findDialog("card")).toBe(registry);
+    expect(await project.findDialog("missing")).toBe(null);
+  });
+
+  it("prefers the registry of the caller's package, then the page's", async () => {
+    const project = projectOf(files);
+    const nba = "packages/nba/src/pages/index.tsx";
+    const football = "packages/football/src/pages/index.tsx";
+    expect(await project.findDialog("game")).toBe(football);
+    expect(await project.findDialog("game", ["packages/nba/src/A.tsx"])).toBe(nba);
+    expect(
+      await project.findDialog("game", [
+        "packages/gameplay/src/A.tsx",
+        "packages/nba/src/pages/x/page.tsx",
+      ]),
+    ).toBe(nba);
+    // The caller's own package wins over the page's.
+    expect(await project.findDialog("card", ["packages/gameplay/src/A.tsx", nba])).toBe(registry);
+  });
+
+  it("lists what a dialog renders, through local and lazy components", async () => {
+    const project = projectOf(files);
+    const { components } = await project.listDialogComponents(registry, "packDetails");
+    expect(components.map(({ name }) => name)).toEqual(["PackDialog"]);
+    expect(await project.locate(registry, components[0])).toEqual({
+      kind: "file",
+      path: "packages/gameplay/src/PackDialog.tsx",
+    });
+    expect(
+      (await project.listDialogComponents(registry, "card")).components.map(({ name }) => name),
+    ).toEqual(["Suspense", "CardPage"]);
+    // In the order rendered, not the order defined.
+    expect(
+      (await project.listDialogComponents(registry, "news")).components.map(({ name }) => name),
+    ).toEqual(["Suspense", "NewsDialog"]);
+  });
+});

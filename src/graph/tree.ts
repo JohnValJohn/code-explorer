@@ -22,6 +22,12 @@ export interface TreeNode {
    * to, whose graph opens instead of expanding.
    */
   navigate?: { to: string | null; page: string | null };
+  /**
+   * For `openDialog(DialogKey.key)`: the key (null when not static). When the
+   * dialog is found, `location` is the registry it's in and expanding lists
+   * the components it renders.
+   */
+  dialog?: { key: string | null };
 }
 
 export type Tree = Record<string, TreeNode>;
@@ -56,13 +62,29 @@ export function restoreTree(tree: Tree): Tree {
   );
 }
 
+/** What to read for a node's children: a file, or a dialog of a registry file. */
+export interface LoadTarget {
+  path: string;
+  dialogKey?: string;
+}
+
+export function loadTarget(node: TreeNode): LoadTarget | null {
+  if (node.location.kind !== "file") return null;
+  const key = node.dialog?.key;
+  return key ? { path: node.location.path, dialogKey: key } : { path: node.location.path };
+}
+
+/** Identifies a load target, to spot cycles. */
+export function targetKey({ path, dialogKey }: LoadTarget): string {
+  return dialogKey === undefined ? path : `${path}#${dialogKey}`;
+}
+
 /** The expanded nodes whose children still have to be loaded. */
-export function pendingLoads(tree: Tree): { id: string; path: string }[] {
+export function pendingLoads(tree: Tree): ({ id: string } & LoadTarget)[] {
   return visibleIds(tree).flatMap((id) => {
-    const { expanded, children, location } = tree[id];
-    return expanded && children.status === "idle" && location.kind === "file"
-      ? [{ id, path: location.path }]
-      : [];
+    const { expanded, children } = tree[id];
+    const target = loadTarget(tree[id]);
+    return expanded && children.status === "idle" && target ? [{ id, ...target }] : [];
   });
 }
 
@@ -81,14 +103,15 @@ export function visibleIds(tree: Tree, id = ROOT_ID): string[] {
   return ids;
 }
 
-/** The file paths open from the root down to `id`, inclusive. */
+/** The `targetKey`s of the files and dialogs open from the root down to `id`, inclusive. */
 export function branchPaths(tree: Tree, id: string): Set<string> {
   const paths = new Set<string>();
   // Child ids extend their parent's: `root/2/0` is under `root/2`.
   const segments = id.split("/");
   for (let i = 1; i <= segments.length; i++) {
-    const location = tree[segments.slice(0, i).join("/")]?.location;
-    if (location?.kind === "file") paths.add(location.path);
+    const node = tree[segments.slice(0, i).join("/")];
+    const target = node && loadTarget(node);
+    if (target) paths.add(targetKey(target));
   }
   return paths;
 }
@@ -99,8 +122,9 @@ const NODE_PADDING = 44; // text padding plus the expand indicator
 
 /** The text shown in the box. */
 export function nodeLabel(node: TreeNode): string {
-  if (!node.navigate) return node.name;
-  return `${node.name} → ${node.navigate.to ?? "?"}`;
+  if (node.navigate) return `${node.name} → ${node.navigate.to ?? "?"}`;
+  if (node.dialog) return `${node.name} → ${node.dialog.key ?? "?"}`;
+  return node.name;
 }
 
 export function nodeWidth(node: TreeNode): number {

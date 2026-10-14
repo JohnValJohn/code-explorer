@@ -245,6 +245,16 @@ button.graph-node:hover {
   border-color: #8250df;
 }
 
+.graph-node.dialog {
+  color: #1a7f37;
+  border-color: #1a7f37;
+}
+
+.graph-node.dialog.unresolved {
+  color: #d33;
+  border-color: var(--border);
+}
+
 .graph-node.cycle {
   color: var(--text);
   border-style: dotted;

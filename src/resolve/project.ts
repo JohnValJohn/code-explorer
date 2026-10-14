@@ -34,6 +34,30 @@ export interface Project {
    * string constant defined in a routes file, e.g. `/players/:slug`.
    */
   resolveRoute(importer: string, references: RouteReference[]): Promise<string | null>;
+  /**
+   * The dialogs registry that has a dialog for `key`, or null when none does.
+   * Registries in the same package as one of `near` (in order) come first.
+   */
+  findDialog(key: string, near?: readonly string[]): Promise<string | null>;
+  /** Lists the components rendered by the dialog for `key` in the registry at `path`. */
+  listDialogComponents(path: string, key: string): Promise<FileComponents>;
+}
+
+/**
+ * The files where `openDialog(DialogKey.x)` dialogs are registered, as
+ * `{ name: DialogKey.x, element: <XDialog /> }` entries, in lookup order.
+ * Sports register their own version of some keys (`game`).
+ */
+export const DIALOG_REGISTRIES = [
+  "packages/gameplay/src/contexts/dialogs/index.tsx",
+  "packages/football/src/pages/index.tsx",
+  "packages/nba/src/pages/index.tsx",
+  "packages/baseball/src/pages/index.tsx",
+];
+
+/** `packages/football/src/pages/index.tsx` → `packages/football/`. */
+function registryPackage(registry: string): string {
+  return registry.slice(0, registry.indexOf("/src/") + 1);
 }
 
 /** `routes.ts`, `routes/index.ts` and their .tsx/.js variants hold the route constants. */
@@ -86,6 +110,34 @@ function propertyOf(object: AstNode, name: string): AstNode | null {
     if ((key.type === "Identifier" && key.name === name) || key.value === name) {
       return property.value as AstNode;
     }
+  }
+  return null;
+}
+
+/** The `element` of the `{ name: DialogKey.key, element }` entry in `program`. */
+function dialogElement(program: Program, key: string): AstNode | null {
+  const pending: unknown[] = [program];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (Array.isArray(node)) {
+      pending.push(...node);
+      continue;
+    }
+    if (node === null || typeof node !== "object") continue;
+    const ast = node as AstNode;
+    if (ast.type === "ObjectExpression") {
+      const name = propertyOf(ast, "name");
+      const element = propertyOf(ast, "element");
+      const value = name && unwrap(name);
+      const nameKey =
+        value?.type === "MemberExpression" && !value.computed
+          ? (value.property as AstNode).name
+          : value?.type === "Literal"
+            ? value.value
+            : undefined;
+      if (element && nameKey === key) return element;
+    }
+    pending.push(...Object.values(ast));
   }
   return null;
 }
@@ -378,6 +430,32 @@ export function createProject(read: ReadFile, packageDirs: readonly string[] = [
       if (parsed === null || code === null) throw new Error(`Can't read ${path}`);
       return {
         components: listComponents(parsed.program, parsed.module, code),
+        syntaxErrors: parsed.errors.filter((error) => error.severity === "Error").length,
+      };
+    },
+
+    async findDialog(key, near = []) {
+      const rank = (registry: string) => {
+        const index = near.findIndex((path) => path.startsWith(registryPackage(registry)));
+        return index === -1 ? near.length : index;
+      };
+      // Stable, so ties keep the lookup order.
+      const registries = [...DIALOG_REGISTRIES].sort((a, b) => rank(a) - rank(b));
+      for (const registry of registries) {
+        const parsed = await parse(registry);
+        if (parsed && dialogElement(parsed.program, key)) return registry;
+      }
+      return null;
+    },
+
+    async listDialogComponents(path, key) {
+      const parsed = await parse(path);
+      const code = await readCached(path);
+      if (parsed === null || code === null) throw new Error(`Can't read ${path}`);
+      const element = dialogElement(parsed.program, key);
+      if (element === null) throw new Error(`No ${key} dialog in ${path}`);
+      return {
+        components: listComponents(parsed.program, parsed.module, code, element),
         syntaxErrors: parsed.errors.filter((error) => error.severity === "Error").length,
       };
     },
