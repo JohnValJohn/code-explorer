@@ -2,7 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { createProject } from "./project.ts";
 
 function projectOf(files: Record<string, string>) {
-  return createProject(async (path) => files[path] ?? null);
+  const packageDirs = Object.keys(files)
+    .filter((path) => path === "package.json" || path.endsWith("/package.json"))
+    .map((path) => path.slice(0, -"package.json".length).replace(/\/$/, ""));
+  return createProject(async (path) => files[path] ?? null, packageDirs);
 }
 
 async function locateAll(files: Record<string, string>, importer: string) {
@@ -54,6 +57,77 @@ describe("createProject", () => {
         "apps/web/src/app/page.tsx",
       ),
     ).toEqual({ Button: { kind: "file", path: "apps/web/src/ui/Button.tsx" } });
+  });
+
+  it("resolves # imports through the nearest package.json's imports field", async () => {
+    expect(
+      await locateAll(
+        {
+          "apps/web/package.json": JSON.stringify({
+            imports: { "#scr/*": "./src/*", "#ui": "./src/ui/index.ts" },
+          }),
+          "apps/web/src/app/page.tsx": [
+            `import { Hero } from "#scr/app/Hero";`,
+            `import { Card } from "#ui";`,
+            `import { Nope } from "#other/Nope";`,
+            `export default () => <><Hero /><Card /><Nope /></>;`,
+          ].join("\n"),
+          "apps/web/src/app/Hero/index.tsx": `export const Hero = () => null;`,
+          "apps/web/src/ui/index.ts": `export { Card } from "./Card";`,
+          "apps/web/src/ui/Card.tsx": `export const Card = () => null;`,
+        },
+        "apps/web/src/app/page.tsx",
+      ),
+    ).toEqual({
+      Hero: { kind: "file", path: "apps/web/src/app/Hero/index.tsx" },
+      Card: { kind: "file", path: "apps/web/src/ui/Card.tsx" },
+      Nope: { kind: "unresolved" },
+    });
+  });
+
+  it("resolves imports of the repo's other packages", async () => {
+    expect(
+      await locateAll(
+        {
+          "apps/web/package.json": JSON.stringify({ name: "@sorare/web" }),
+          "apps/web/src/page.tsx": [
+            `import { Button } from "@sorare/ui/components/Button";`,
+            `import { Card } from "@sorare/ui";`,
+            `import { Chart } from "@sorare/charts/Chart";`,
+            `import { Legacy } from "@sorare/legacy/Legacy";`,
+            `import { Gone } from "@sorare/legacy/Gone";`,
+            `import { Slot } from "@sorare/external";`,
+            `export default () => <><Button /><Card /><Chart /><Legacy /><Gone /><Slot /></>;`,
+          ].join("\n"),
+          // `exports` patterns, pointing at sources (the `types` target is skipped).
+          "packages/ui/package.json": JSON.stringify({
+            name: "@sorare/ui",
+            exports: {
+              ".": "./src/index.ts",
+              "./*": { types: "./dist/*.d.ts", default: "./src/*.tsx" },
+            },
+          }),
+          "packages/ui/src/index.ts": `export * from "./components/Card";`,
+          "packages/ui/src/components/Button.tsx": `export const Button = () => null;`,
+          "packages/ui/src/components/Card.tsx": `export const Card = () => null;`,
+          // No `exports`: files under src/.
+          "packages/charts/package.json": JSON.stringify({ name: "@sorare/charts" }),
+          "packages/charts/src/Chart.tsx": `export const Chart = () => null;`,
+          // No `exports`: files at the package root.
+          "packages/legacy/package.json": JSON.stringify({ name: "@sorare/legacy" }),
+          "packages/legacy/Legacy.jsx": `export const Legacy = () => null;`,
+        },
+        "apps/web/src/page.tsx",
+      ),
+    ).toEqual({
+      Button: { kind: "file", path: "packages/ui/src/components/Button.tsx" },
+      Card: { kind: "file", path: "packages/ui/src/components/Card.tsx" },
+      Chart: { kind: "file", path: "packages/charts/src/Chart.tsx" },
+      Legacy: { kind: "file", path: "packages/legacy/Legacy.jsx" },
+      // In the repo but missing, as opposed to a package from npm.
+      Gone: { kind: "unresolved" },
+      Slot: { kind: "package" },
+    });
   });
 
   it("follows barrel re-exports to the defining file", async () => {

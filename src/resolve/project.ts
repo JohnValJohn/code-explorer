@@ -6,6 +6,7 @@ import {
 } from "../components/listComponents.ts";
 import { parseSource } from "../parser/parseSource.ts";
 import { dirname, joinPath } from "./paths.ts";
+import { matchSubpath } from "./subpaths.ts";
 
 /** Reads a root-relative file, or returns null when there's no such file. */
 export type ReadFile = (path: string) => Promise<string | null>;
@@ -32,10 +33,24 @@ export interface Project {
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 const HAS_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/;
 
-/** Resolves module specifiers and reads/parses files, caching both per path. */
-export function createProject(read: ReadFile): Project {
+interface PackageJson {
+  name?: unknown;
+  imports?: unknown;
+  exports?: unknown;
+  source?: unknown;
+  module?: unknown;
+  main?: unknown;
+}
+
+/**
+ * Resolves module specifiers and reads/parses files, caching both per path.
+ * `packageDirs` are the repo's folders with a package.json, so that imports of
+ * its other packages (`@scope/ui/Button`) resolve into the repo.
+ */
+export function createProject(read: ReadFile, packageDirs: readonly string[] = []): Project {
   const texts = new Map<string, Promise<string | null>>();
   const parses = new Map<string, Promise<ParseResult | null>>();
+  let workspace: Promise<Map<string, string>> | undefined;
 
   function readCached(path: string): Promise<string | null> {
     let text = texts.get(path);
@@ -68,28 +83,100 @@ export function createProject(read: ReadFile): Project {
     return null;
   }
 
+  async function packageJson(dir: string): Promise<PackageJson> {
+    const text = await readCached(dir === "" ? "package.json" : `${dir}/package.json`);
+    try {
+      const json: unknown = text === null ? null : JSON.parse(text);
+      return json !== null && typeof json === "object" ? json : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Maps the names of the repo's packages to their folders. */
+  function workspacePackages(): Promise<Map<string, string>> {
+    return (workspace ??= Promise.all(
+      packageDirs.map(async (dir) => [(await packageJson(dir)).name, dir] as const),
+    ).then(
+      (entries) =>
+        new Map(entries.filter((entry): entry is [string, string] => typeof entry[0] === "string")),
+    ));
+  }
+
+  /** Splits `@scope/ui/Button` into the repo package it imports from and the rest. */
+  async function findWorkspacePackage(
+    specifier: string,
+  ): Promise<{ dir: string; rest: string } | null> {
+    let best: { name: string; dir: string } | null = null;
+    for (const [name, dir] of await workspacePackages()) {
+      if (
+        (specifier === name || specifier.startsWith(`${name}/`)) &&
+        (best === null || name.length > best.name.length)
+      ) {
+        best = { name, dir };
+      }
+    }
+    return best && { dir: best.dir, rest: specifier.slice(best.name.length + 1) };
+  }
+
+  /** Candidate targets, relative to the package folder, for `rest` of a repo package. */
+  function packageTargets(json: PackageJson, rest: string): string[] {
+    const { exports } = json;
+    // `exports` is either a map of subpaths (`"./*"`) or directly the target of `"."`.
+    const subpaths =
+      exports !== null &&
+      typeof exports === "object" &&
+      !Array.isArray(exports) &&
+      Object.keys(exports).some((key) => key.startsWith("."))
+        ? exports
+        : { ".": exports };
+    const targets = matchSubpath(subpaths, rest === "" ? "." : `./${rest}`);
+    if (rest === "") {
+      for (const field of [json.source, json.module, json.main]) {
+        if (typeof field === "string") targets.push(field.startsWith("./") ? field : `./${field}`);
+      }
+    }
+    // Packages without (matching) exports, imported straight from their files.
+    targets.push(`./${rest}`, `./src/${rest}`);
+    return targets;
+  }
+
   /** Maps a local specifier to a file, or null when it can't be found. */
   async function resolveFile(importer: string, specifier: string): Promise<string | null> {
-    let base: string | null;
-    if (specifier.startsWith("@/")) {
+    let bases: (string | null)[];
+    if (specifier.startsWith("#")) {
+      // Node subpath imports, declared in the importer's package.json.
       const packageDir = await nearestPackageDir(importer);
       if (packageDir === null) return null;
-      base = joinPath(packageDir, `src/${specifier.slice(2)}`);
+      bases = matchSubpath((await packageJson(packageDir)).imports, specifier).map((target) =>
+        joinPath(packageDir, target),
+      );
+    } else if (specifier.startsWith("@/")) {
+      const packageDir = await nearestPackageDir(importer);
+      if (packageDir === null) return null;
+      bases = [joinPath(packageDir, `src/${specifier.slice(2)}`)];
     } else if (specifier === "." || specifier === ".." || /^\.{1,2}\//.test(specifier)) {
-      base = joinPath(dirname(importer), specifier);
+      bases = [joinPath(dirname(importer), specifier)];
     } else {
-      return null;
+      const found = await findWorkspacePackage(specifier);
+      if (found === null) return null;
+      bases = packageTargets(await packageJson(found.dir), found.rest).map((target) =>
+        joinPath(found.dir, target),
+      );
     }
-    if (base === null) return null;
 
-    const candidates = [
-      ...(HAS_EXTENSION.test(base) ? [base] : []),
-      // TS ESM style: `./Button.js` refers to `./Button.tsx`.
-      ...(/\.jsx?$/.test(base) ? EXTENSIONS.map((ext) => base.replace(/\.jsx?$/, ext)) : []),
-      ...EXTENSIONS.map((ext) => base + ext),
-      ...EXTENSIONS.map((ext) => `${base}/index${ext}`),
-    ];
-    return firstExisting(candidates);
+    for (const base of bases) {
+      if (base === null) continue;
+      const found = await firstExisting([
+        ...(HAS_EXTENSION.test(base) ? [base] : []),
+        // TS ESM style: `./Button.js` refers to `./Button.tsx`.
+        ...(/\.jsx?$/.test(base) ? EXTENSIONS.map((ext) => base.replace(/\.jsx?$/, ext)) : []),
+        ...EXTENSIONS.map((ext) => base + ext),
+        ...EXTENSIONS.map((ext) => `${base}/index${ext}`),
+      ]);
+      if (found !== null) return found;
+    }
+    return null;
   }
 
   /**
@@ -151,10 +238,11 @@ export function createProject(read: ReadFile): Project {
 
     async locate(importer, component) {
       const { source, importedName } = component.import;
-      if (!isLocalSource(source)) return { kind: "package" };
-
       const module = await resolveFile(importer, source);
-      if (module === null) return { kind: "unresolved" };
+      if (module === null) {
+        const inRepo = isLocalSource(source) || (await findWorkspacePackage(source)) !== null;
+        return { kind: inRepo ? "unresolved" : "package" };
+      }
 
       // `<UI.Card>` with `import * as UI`: look up the `Card` export.
       const name = importedName === "*" ? component.name.split(".")[1] : importedName;

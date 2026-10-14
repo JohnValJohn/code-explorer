@@ -29,6 +29,8 @@ const nodeTypes = { component: ComponentNode };
 
 interface ComponentGraphProps {
   root: FileSystemDirectoryHandle;
+  /** Folders with a package.json, to resolve imports of other packages in the repo. */
+  packageDirs: string[];
   path: string;
   onBack: () => void;
 }
@@ -38,9 +40,12 @@ interface ComponentGraphProps {
  * the component's file and adds the components it renders. Remount (via `key`)
  * to show another page.
  */
-export function ComponentGraph({ root, path, onBack }: ComponentGraphProps) {
+export function ComponentGraph({ root, packageDirs, path, onBack }: ComponentGraphProps) {
   // Caches file reads and parses for as long as this page is open.
-  const project = useMemo(() => createProject((file) => tryReadFileAtPath(root, file)), [root]);
+  const project = useMemo(
+    () => createProject((file) => tryReadFileAtPath(root, file), packageDirs),
+    [root, packageDirs],
+  );
   const [tree, setTree] = useState<Tree>(() => ({
     [ROOT_ID]: {
       id: ROOT_ID,

@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { loadRootHandle, saveRootHandle } from "./fs/handleStore.ts";
-import { PAGE_FILE_NAME, scanPages } from "./fs/scanPages.ts";
+import { PAGE_FILE_NAME, scanRepository } from "./fs/scanPages.ts";
 import { loadSelectedPath, saveSelectedPath } from "./fs/selectionStore.ts";
 import { filterPaths, type PathMatch } from "./search/filterPaths.ts";
 import { ComponentGraph } from "./graph/ComponentGraph.tsx";
@@ -14,7 +14,12 @@ type FolderState =
   | { status: "empty" }
   | { status: "needs-permission"; handle: FileSystemDirectoryHandle }
   | { status: "scanning"; handle: FileSystemDirectoryHandle }
-  | { status: "ready"; handle: FileSystemDirectoryHandle; paths: string[] }
+  | {
+      status: "ready";
+      handle: FileSystemDirectoryHandle;
+      paths: string[];
+      packageDirs: string[];
+    }
   | { status: "error"; message: string };
 
 const isSupported = typeof window.showDirectoryPicker === "function";
@@ -51,8 +56,8 @@ function App() {
     setSelectedPath(null);
     setOpenPath(null);
     try {
-      const paths = await scanPages(handle);
-      setFolder({ status: "ready", handle, paths });
+      const { pages: paths, packageDirs } = await scanRepository(handle);
+      setFolder({ status: "ready", handle, paths, packageDirs });
       const savedPath = loadSelectedPath();
       if (savedPath !== null && paths.includes(savedPath)) {
         setSelectedPath(savedPath);
@@ -134,6 +139,7 @@ function App() {
         <ComponentGraph
           key={openPath}
           root={folder.handle}
+          packageDirs={folder.packageDirs}
           path={openPath}
           onBack={() => setOpenPath(null)}
         />

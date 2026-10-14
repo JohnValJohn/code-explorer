@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { scanPages } from "./scanPages.ts";
+import { scanRepository } from "./scanPages.ts";
 
 type Tree = { [name: string]: Tree | "file" };
 
@@ -27,7 +27,7 @@ describe("scanPages", () => {
       },
     });
 
-    expect(await scanPages(root)).toEqual([
+    expect((await scanRepository(root)).pages).toEqual([
       "app/about/page.tsx",
       "app/settings/page.tsx",
       "page.tsx",
@@ -43,6 +43,16 @@ describe("scanPages", () => {
       src: { "page.tsx": "file" },
     });
 
-    expect(await scanPages(root)).toEqual(["src/page.tsx"]);
+    expect((await scanRepository(root)).pages).toEqual(["src/page.tsx"]);
+  });
+
+  it("collects package folders", async () => {
+    const root = fakeDirectory("repo", {
+      "package.json": "file",
+      packages: { ui: { "package.json": "file", src: {} }, docs: { "README.md": "file" } },
+      node_modules: { react: { "package.json": "file" } },
+    });
+
+    expect((await scanRepository(root)).packageDirs).toEqual(["", "packages/ui"]);
   });
 });

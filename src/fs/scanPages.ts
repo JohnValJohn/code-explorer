@@ -7,13 +7,21 @@ export function isIgnoredDirectory(name: string): boolean {
   return name.startsWith(".") || IGNORED_DIRECTORIES.has(name);
 }
 
+export interface Repository {
+  /** Root-relative paths of every `page.tsx` file, sorted alphabetically. */
+  pages: string[];
+  /** Root-relative folders containing a package.json ("" for the root), sorted. */
+  packageDirs: string[];
+}
+
 /**
- * Recursively walks `root` and returns the root-relative paths of every
- * `page.tsx` file, sorted alphabetically. Sibling directories are read in
- * parallel since each read is an async round-trip to the browser.
+ * Recursively walks `root` for `page.tsx` files and package folders. Sibling
+ * directories are read in parallel since each read is an async round-trip to
+ * the browser.
  */
-export async function scanPages(root: FileSystemDirectoryHandle): Promise<string[]> {
-  const paths: string[] = [];
+export async function scanRepository(root: FileSystemDirectoryHandle): Promise<Repository> {
+  const pages: string[] = [];
+  const packageDirs: string[] = [];
 
   async function walk(dir: FileSystemDirectoryHandle, prefix: string): Promise<void> {
     const subdirectories: Promise<void>[] = [];
@@ -23,12 +31,15 @@ export async function scanPages(root: FileSystemDirectoryHandle): Promise<string
           subdirectories.push(walk(entry as FileSystemDirectoryHandle, `${prefix}${entry.name}/`));
         }
       } else if (entry.name === PAGE_FILE_NAME) {
-        paths.push(`${prefix}${entry.name}`);
+        pages.push(`${prefix}${entry.name}`);
+      } else if (entry.name === "package.json") {
+        packageDirs.push(prefix.slice(0, -1));
       }
     }
     await Promise.all(subdirectories);
   }
 
   await walk(root, "");
-  return paths.sort((a, b) => a.localeCompare(b));
+  const byName = (a: string, b: string) => a.localeCompare(b);
+  return { pages: pages.sort(byName), packageDirs: packageDirs.sort(byName) };
 }
