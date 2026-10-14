@@ -3,7 +3,7 @@ import { loadRootHandle, saveRootHandle } from "./fs/handleStore.ts";
 import { PAGE_FILE_NAME, scanPages } from "./fs/scanPages.ts";
 import { loadSelectedPath, saveSelectedPath } from "./fs/selectionStore.ts";
 import { filterPaths, type PathMatch } from "./search/filterPaths.ts";
-import { PageComponents } from "./components/PageComponents.tsx";
+import { ComponentGraph } from "./graph/ComponentGraph.tsx";
 import "./App.css";
 
 // Rendering thousands of rows at once makes typing sluggish.
@@ -22,7 +22,10 @@ const isSupported = typeof window.showDirectoryPicker === "function";
 function App() {
   const [folder, setFolder] = useState<FolderState>({ status: "empty" });
   const [query, setQuery] = useState("");
+  // The last visited page, pinned at the top of the list.
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // The page whose graph is shown full-width, hiding the list.
+  const [openPath, setOpenPath] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query);
 
   useEffect(() => {
@@ -46,11 +49,15 @@ function App() {
   async function scan(handle: FileSystemDirectoryHandle) {
     setFolder({ status: "scanning", handle });
     setSelectedPath(null);
+    setOpenPath(null);
     try {
       const paths = await scanPages(handle);
       setFolder({ status: "ready", handle, paths });
       const savedPath = loadSelectedPath();
-      if (savedPath !== null && paths.includes(savedPath)) setSelectedPath(savedPath);
+      if (savedPath !== null && paths.includes(savedPath)) {
+        setSelectedPath(savedPath);
+        setOpenPath(savedPath);
+      }
     } catch (error) {
       setFolder({ status: "error", message: String(error) });
     }
@@ -76,8 +83,9 @@ function App() {
     }
   }
 
-  function selectPath(path: string | null) {
+  function openPage(path: string) {
     setSelectedPath(path);
+    setOpenPath(path);
     saveSelectedPath(path);
   }
 
@@ -99,7 +107,7 @@ function App() {
   }
 
   return (
-    <main className="app">
+    <main className={openPath ? "app graph-open" : "app"}>
       <header className="toolbar">
         <h1>Code Explorer</h1>
         <div className="toolbar-actions">
@@ -122,7 +130,16 @@ function App() {
       {folder.status === "error" && <p className="notice error">{folder.message}</p>}
       {folder.status === "scanning" && <p className="notice">Scanning {folder.handle.name}…</p>}
 
-      {folder.status === "ready" && (
+      {folder.status === "ready" && openPath && (
+        <ComponentGraph
+          key={openPath}
+          root={folder.handle}
+          path={openPath}
+          onBack={() => setOpenPath(null)}
+        />
+      )}
+
+      {folder.status === "ready" && !openPath && (
         <>
           <input
             className="search"
@@ -137,30 +154,20 @@ function App() {
             {matches.length} of {paths.length} {PAGE_FILE_NAME} files
             {matches.length > MAX_VISIBLE_RESULTS && ` (showing first ${MAX_VISIBLE_RESULTS})`}
           </p>
-          <div className={selectedPath ? "workspace has-selection" : "workspace"}>
-            <ul className="results">
-              {matches.slice(0, MAX_VISIBLE_RESULTS).map((match) => (
-                <li key={match.path}>
-                  <button
-                    type="button"
-                    className="result"
-                    aria-pressed={match.path === selectedPath}
-                    onClick={() => selectPath(match.path)}
-                  >
-                    <HighlightedPath match={match} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {selectedPath && (
-              <PageComponents
-                key={selectedPath}
-                root={folder.handle}
-                path={selectedPath}
-                onClose={() => selectPath(null)}
-              />
-            )}
-          </div>
+          <ul className="results">
+            {matches.slice(0, MAX_VISIBLE_RESULTS).map((match) => (
+              <li key={match.path}>
+                <button
+                  type="button"
+                  className="result"
+                  aria-pressed={match.path === selectedPath}
+                  onClick={() => openPage(match.path)}
+                >
+                  <HighlightedPath match={match} />
+                </button>
+              </li>
+            ))}
+          </ul>
         </>
       )}
     </main>

@@ -118,100 +118,115 @@ button:hover {
   box-shadow: inset 0 -2px var(--accent);
 }
 
-.workspace {
-  display: grid;
-  gap: 12px;
-  align-items: start;
+.app.graph-open {
+  max-width: none;
+  height: 100vh;
+  box-sizing: border-box;
 }
 
-@media (min-width: 900px) {
-  .workspace.has-selection {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  .components {
-    position: sticky;
-    top: 12px;
-    max-height: calc(100vh - 24px);
-    overflow: auto;
-  }
-}
-
-.components {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.components-header {
+.graph {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 12px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
 }
 
-.components-header h2 {
+.graph-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.graph-header h2 {
   margin: 0;
   font: 600 14px/1.4 var(--mono);
   color: var(--text-h);
   overflow-wrap: anywhere;
 }
 
-.components .notice {
-  margin: 12px;
-}
-
-.component-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.component-list li {
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.component-list li + li {
-  border-top: 1px solid var(--border);
-}
-
-.component-row {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.component-row code {
-  font: 14px/1.4 var(--mono);
-  overflow-wrap: anywhere;
-}
-
-.component-row .local {
-  color: var(--text-h);
-}
-
-.component-source.package {
-  color: var(--accent);
-}
-
-.component-source {
-  font: 13px/1.4 var(--mono);
-  overflow-wrap: anywhere;
-}
-
-.tag {
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 999px;
+.graph-canvas {
+  flex: 1;
+  min-height: 0;
   border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.line {
-  margin-left: auto;
-  font: 12px var(--mono);
+.graph-canvas .react-flow {
+  --xy-background-color: var(--bg);
+}
+
+.graph-canvas .react-flow__handle {
+  visibility: hidden;
+}
+
+.graph-legend {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.graph-legend .graph-node {
+  height: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.graph-node {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  font: 14px/1 var(--mono);
+  text-align: left;
+  white-space: nowrap;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.graph-node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.graph-node-indicator {
+  color: var(--text);
+}
+
+button.graph-node:hover {
+  border-color: var(--accent-border);
+}
+
+.graph-node[aria-expanded="true"] {
+  border-color: var(--accent-border);
+}
+
+.graph-node.page {
+  font-weight: 600;
+  background: var(--code-bg);
+}
+
+.graph-node.package {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.graph-node.unresolved {
+  color: #d33;
+  border-style: dashed;
+}
+
+.graph-node.cycle {
+  color: var(--text);
+  border-style: dotted;
 }

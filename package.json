@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@oxc-parser/binding-wasm32-wasip1": "^0.153.0",
+    "@xyflow/react": "^12.12.0",
     "oxc-parser": "^0.153.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
