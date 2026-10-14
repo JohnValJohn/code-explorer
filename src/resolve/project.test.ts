@@ -187,3 +187,66 @@ describe("createProject", () => {
     });
   });
 });
+
+describe("resolveRoute", () => {
+  async function routesOf(files: Record<string, string>, importer: string) {
+    const project = projectOf(files);
+    const { components } = await project.listComponents(importer);
+    return Promise.all(
+      components.map((component) =>
+        component.navigateTo === null && component.routeReferences
+          ? project.resolveRoute(importer, component.routeReferences)
+          : Promise.resolve(component.navigateTo),
+      ),
+    );
+  }
+
+  it("finds the routes.ts constant a Navigate's to is built from", async () => {
+    expect(
+      await routesOf(
+        {
+          "package.json": `{}`,
+          "src/constants/routes.ts": [
+            `const BASE = "/football";`,
+            `export const PLAYER = \`\${BASE}/players/:slug\`;`,
+            `export const ROUTES = { club: { show: "/clubs/:id" } } as const;`,
+            `export const HOME = "/";`,
+          ].join("\n"),
+          "src/constants/index.ts": `export * from "./routes";`,
+          "src/lib/generatePath.ts": `export const generatePath = (p, params) => p;`,
+          "src/app/page.tsx": [
+            `import { Navigate } from "react-router";`,
+            `import { generatePath } from "@/lib/generatePath";`,
+            `import { PLAYER, ROUTES } from "@/constants";`,
+            `import * as routes from "../constants/routes";`,
+            `import { HOME as START } from "../constants/routes";`,
+            `export default function Page({ slug, id, other }) {`,
+            `  const url = generatePath(ROUTES.club.show, { id });`,
+            `  if (slug) return <Navigate to={generatePath(PLAYER, { slug })} />;`,
+            `  if (id) return <Navigate to={url} />;`,
+            `  if (other) return <Navigate to={other} />;`,
+            `  return <><Navigate to={routes.HOME} /><Navigate to={START} /></>;`,
+            `}`,
+          ].join("\n"),
+        },
+        "src/app/page.tsx",
+      ),
+    ).toEqual(["/football/players/:slug", "/clubs/:id", null, "/", "/"]);
+  });
+
+  it("ignores constants outside routes files", async () => {
+    expect(
+      await routesOf(
+        {
+          "app/paths.ts": `export const HOME = "/";`,
+          "app/page.tsx": [
+            `import { Navigate } from "./Navigate";`,
+            `import { HOME } from "./paths";`,
+            `export default () => <Navigate to={HOME} />;`,
+          ].join("\n"),
+        },
+        "app/page.tsx",
+      ),
+    ).toEqual([null]);
+  });
+});

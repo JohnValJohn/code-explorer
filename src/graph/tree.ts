@@ -17,14 +17,57 @@ export interface TreeNode {
   cycle: boolean;
   expanded: boolean;
   children: Children;
+  /**
+   * For `<Navigate>`: its `to` (null when not static) and the page it leads
+   * to, whose graph opens instead of expanding.
+   */
+  navigate?: { to: string | null; page: string | null };
 }
 
 export type Tree = Record<string, TreeNode>;
 
 export const ROOT_ID = "root";
 
+/** A page's tree before anything is loaded: the page itself, to be expanded. */
+export function pageTree(path: string): Tree {
+  return {
+    [ROOT_ID]: {
+      id: ROOT_ID,
+      name: path,
+      source: path,
+      location: { kind: "file", path },
+      cycle: false,
+      expanded: true,
+      children: { status: "idle" },
+    },
+  };
+}
+
+/**
+ * A tree saved while some children were still loading, ready to be shown
+ * again: those loads were dropped, so they're marked to be redone.
+ */
+export function restoreTree(tree: Tree): Tree {
+  return Object.fromEntries(
+    Object.entries(tree).map(([id, node]) => [
+      id,
+      node.children.status === "loading" ? { ...node, children: { status: "idle" } } : node,
+    ]),
+  );
+}
+
+/** The expanded nodes whose children still have to be loaded. */
+export function pendingLoads(tree: Tree): { id: string; path: string }[] {
+  return visibleIds(tree).flatMap((id) => {
+    const { expanded, children, location } = tree[id];
+    return expanded && children.status === "idle" && location.kind === "file"
+      ? [{ id, path: location.path }]
+      : [];
+  });
+}
+
 export function canExpand(node: TreeNode): boolean {
-  return node.location.kind === "file" && !node.cycle;
+  return node.location.kind === "file" && !node.cycle && !node.navigate;
 }
 
 /** The ids of `id`'s visible descendants and itself, parents before children. */
@@ -54,8 +97,14 @@ export const NODE_HEIGHT = 36;
 const CHAR_WIDTH = 8.4; // 14px monospace
 const NODE_PADDING = 44; // text padding plus the expand indicator
 
+/** The text shown in the box. */
+export function nodeLabel(node: TreeNode): string {
+  if (!node.navigate) return node.name;
+  return `${node.name} → ${node.navigate.to ?? "?"}`;
+}
+
 export function nodeWidth(node: TreeNode): number {
-  return Math.ceil(node.name.length * CHAR_WIDTH + NODE_PADDING);
+  return Math.ceil(nodeLabel(node).length * CHAR_WIDTH + NODE_PADDING);
 }
 
 export interface PositionedNode {

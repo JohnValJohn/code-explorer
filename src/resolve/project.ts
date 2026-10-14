@@ -1,8 +1,9 @@
-import type { ParseResult } from "oxc-parser";
+import type { ParseResult, Program } from "oxc-parser";
 import {
   isLocalSource,
   listComponents,
   type RenderedComponent,
+  type RouteReference,
 } from "../components/listComponents.ts";
 import { parseSource } from "../parser/parseSource.ts";
 import { dirname, joinPath } from "./paths.ts";
@@ -28,7 +29,69 @@ export interface Project {
   listComponents(path: string): Promise<FileComponents>;
   /** Finds the file defining `component`, rendered in `importer`, following barrel re-exports. */
   locate(importer: string, component: RenderedComponent): Promise<ComponentLocation>;
+  /**
+   * The route of the first of `references` (used in `importer`) that is a
+   * string constant defined in a routes file, e.g. `/players/:slug`.
+   */
+  resolveRoute(importer: string, references: RouteReference[]): Promise<string | null>;
 }
+
+/** `routes.ts`, `routes/index.ts` and their .tsx/.js variants hold the route constants. */
+export function isRoutesFile(path: string): boolean {
+  return /(^|\/)routes(\/index)?\.[jt]sx?$/.test(path);
+}
+
+type AstNode = { type: string; [key: string]: unknown };
+
+/** A value's AST node, with the file it's in to look up the identifiers it uses. */
+interface Value {
+  file: string;
+  node: AstNode;
+}
+
+// Wrappers that don't change a value: `("/a" as const)`, `x satisfies Routes`.
+function unwrap(node: AstNode): AstNode {
+  while (
+    node.type === "TSAsExpression" ||
+    node.type === "TSSatisfiesExpression" ||
+    node.type === "TSNonNullExpression" ||
+    node.type === "ParenthesizedExpression"
+  ) {
+    node = node.expression as AstNode;
+  }
+  return node;
+}
+
+/** The initializer of the top-level `const name = …` in `program`. */
+function topLevelConst(program: Program, name: string): AstNode | null {
+  for (const statement of program.body as unknown as AstNode[]) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? (statement.declaration as AstNode) : statement;
+    if (declaration?.type !== "VariableDeclaration") continue;
+    for (const declarator of declaration.declarations as AstNode[]) {
+      const id = declarator.id as AstNode;
+      if (id.type === "Identifier" && id.name === name && declarator.init) {
+        return declarator.init as AstNode;
+      }
+    }
+  }
+  return null;
+}
+
+/** The value of `object`'s property `name`, if written literally. */
+function propertyOf(object: AstNode, name: string): AstNode | null {
+  for (const property of object.properties as AstNode[]) {
+    if (property.type !== "Property" || property.computed) continue;
+    const key = property.key as AstNode;
+    if ((key.type === "Identifier" && key.name === name) || key.value === name) {
+      return property.value as AstNode;
+    }
+  }
+  return null;
+}
+
+// Guards against constants defined in terms of each other.
+const MAX_LOOKUPS = 50;
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 const HAS_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/;
@@ -225,7 +288,90 @@ export function createProject(read: ReadFile, packageDirs: readonly string[] = [
     return null;
   }
 
+  /** The value of export `name` of `module`, following re-exports. */
+  async function exportedValue(module: string, name: string): Promise<Value | null> {
+    const file = await findDefinition(module, name, new Set());
+    if (file === null) return null;
+    const parsed = await parse(file);
+    const node = parsed && topLevelConst(parsed.program, name);
+    return node ? { file, node } : null;
+  }
+
+  /** Follows identifiers and property reads in `value` to the literal they stand for. */
+  async function dereference(value: Value, budget: { left: number }): Promise<Value | null> {
+    if (--budget.left < 0) return null;
+    const node = unwrap(value.node);
+    if (node.type === "Identifier") {
+      const parsed = await parse(value.file);
+      if (parsed === null) return null;
+      const name = node.name as string;
+      const local = topLevelConst(parsed.program, name);
+      if (local) return dereference({ file: value.file, node: local }, budget);
+      for (const statement of parsed.module.staticImports) {
+        for (const entry of statement.entries) {
+          if (entry.localName.value !== name || entry.importName.kind !== "Name") continue;
+          const module = await resolveFile(value.file, statement.moduleRequest.value);
+          if (module === null) return null;
+          const imported = await exportedValue(module, entry.importName.name!);
+          return imported && dereference(imported, budget);
+        }
+      }
+      return null;
+    }
+    if (node.type === "MemberExpression" && !node.computed) {
+      const object = await dereference({ file: value.file, node: node.object as AstNode }, budget);
+      if (object?.node.type !== "ObjectExpression") return null;
+      const property = propertyOf(object.node, (node.property as AstNode).name as string);
+      return property && dereference({ file: object.file, node: property }, budget);
+    }
+    return { file: value.file, node };
+  }
+
+  /** The string `value` evaluates to, with unknown template holes as `:param`. */
+  async function stringOf(value: Value, budget: { left: number }): Promise<string | null> {
+    const resolved = await dereference(value, budget);
+    if (resolved === null) return null;
+    const { node, file } = resolved;
+    if (node.type === "Literal") return typeof node.value === "string" ? node.value : null;
+    if (node.type !== "TemplateLiteral") return null;
+    const quasis = node.quasis as { value: { cooked: string | null } }[];
+    const expressions = node.expressions as AstNode[];
+    let result = quasis[0].value.cooked ?? "";
+    for (let i = 0; i < expressions.length; i++) {
+      const hole = await stringOf({ file, node: expressions[i] }, budget);
+      result += (hole ?? ":param") + (quasis[i + 1].value.cooked ?? "");
+    }
+    return result;
+  }
+
   return {
+    async resolveRoute(importer, references) {
+      for (const { import: imported, path } of references) {
+        const module = await resolveFile(importer, imported.source);
+        if (module === null) continue;
+        // `routes.PLAYER` with `import * as routes`: the `PLAYER` export.
+        const [name, ...rest] =
+          imported.importedName === "*" ? path : [imported.importedName, ...path];
+        if (name === undefined) continue;
+        const exported = await exportedValue(module, name);
+        if (exported === null || !isRoutesFile(exported.file)) continue;
+
+        // `ROUTES.player.show` read back as a member expression on the constant.
+        const node = rest.reduce<AstNode>(
+          (object, property) => ({
+            type: "MemberExpression",
+            computed: false,
+            object,
+            property: { type: "Identifier", name: property },
+          }),
+          exported.node,
+        );
+        const route = await stringOf({ file: exported.file, node }, { left: MAX_LOOKUPS });
+        if (route !== null && route.startsWith("/")) return route;
+      }
+      return null;
+    },
+
     async listComponents(path) {
       const parsed = await parse(path);
       const code = await readCached(path);

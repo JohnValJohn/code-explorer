@@ -86,3 +86,77 @@ describe("isLocalSource", () => {
     expect(["react", "@scope/pkg", "node:fs"].some(isLocalSource)).toBe(false);
   });
 });
+
+describe("listComponents with Navigate", () => {
+  it("lists each static target of Navigate separately", () => {
+    expect(
+      componentsOf([
+        `import { Navigate } from "react-router";`,
+        `import { Navigate as Redirect } from "@/routing";`,
+        `export default function Page({ id, to }) {`,
+        `  if (id) return <Navigate to={\`/players/\${id}?tab=\${1}\`} />;`,
+        `  if (to) return <Navigate to={to} />;`,
+        `  return <><Navigate to="/home" /><Redirect to={{ pathname: "/home" }} /><Navigate to={"/home"} /></>;`,
+        `}`,
+      ]).map(({ name, navigateTo, count }) => ({ name, navigateTo, count })),
+    ).toEqual([
+      { name: "Navigate", navigateTo: "/players/:id?tab=:param", count: 1 },
+      { name: "Navigate", navigateTo: null, count: 1 },
+      { name: "Navigate", navigateTo: "/home", count: 2 },
+      { name: "Redirect", navigateTo: "/home", count: 1 },
+    ]);
+  });
+});
+
+describe("listComponents with useNavigate", () => {
+  it("lists each navigate() call target, in order with the components", () => {
+    expect(
+      componentsOf([
+        `import { useNavigate as useNav } from "react-router";`,
+        `import { Button } from "./Button";`,
+        `import { PLAYER } from "@/routes";`,
+        `export default function Page({ slug }) {`,
+        `  const go = useNav();`,
+        `  const back = () => go(-1);`,
+        `  return <Button onClick={() => go(\`/players/\${slug}\`, { replace: true })}`,
+        `    onBlur={() => go(PLAYER)} onFocus={() => go("/home")} onHover={() => go("/home")} />;`,
+        `}`,
+      ]).map(({ name, import: { importedName }, navigateTo, routeReferences, count }) => ({
+        name,
+        importedName,
+        navigateTo,
+        routeReferences,
+        count,
+      })),
+    ).toEqual([
+      {
+        name: "Button",
+        importedName: "Button",
+        navigateTo: undefined,
+        routeReferences: undefined,
+        count: 1,
+      },
+      {
+        name: "go()",
+        importedName: "useNavigate",
+        navigateTo: "/players/:slug",
+        routeReferences: undefined,
+        count: 1,
+      },
+      {
+        name: "go()",
+        importedName: "useNavigate",
+        navigateTo: null,
+        routeReferences: [{ import: { source: "@/routes", importedName: "PLAYER" }, path: [] }],
+        count: 1,
+      },
+      {
+        name: "go()",
+        importedName: "useNavigate",
+        navigateTo: "/home",
+        routeReferences: undefined,
+        count: 2,
+      },
+    ]);
+  });
+});

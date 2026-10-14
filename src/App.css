@@ -240,6 +240,11 @@ button.graph-node:hover {
   border-style: dashed;
 }
 
+.graph-node.navigate {
+  color: #8250df;
+  border-color: #8250df;
+}
+
 .graph-node.cycle {
   color: var(--text);
   border-style: dotted;

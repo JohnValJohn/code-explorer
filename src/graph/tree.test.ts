@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ComponentLocation } from "../resolve/project.ts";
-import { branchPaths, layoutTree, ROOT_ID, visibleIds, type Tree, type TreeNode } from "./tree.ts";
+import {
+  branchPaths,
+  layoutTree,
+  pageTree,
+  pendingLoads,
+  restoreTree,
+  ROOT_ID,
+  visibleIds,
+  type Tree,
+  type TreeNode,
+} from "./tree.ts";
 
 function node(id: string, location: ComponentLocation, extra: Partial<TreeNode> = {}): TreeNode {
   return {
@@ -57,5 +67,27 @@ describe("tree", () => {
       { source: "root/0", target: "root/0/0" },
       { source: ROOT_ID, target: "root/1" },
     ]);
+  });
+});
+
+describe("restoring a tree", () => {
+  it("loads the page first", () => {
+    expect(pendingLoads(pageTree("app/page.tsx"))).toEqual([{ id: ROOT_ID, path: "app/page.tsx" }]);
+  });
+
+  it("redoes loads that were in progress when the tree was left", () => {
+    const left: Tree = {
+      ...tree,
+      "root/0/0": node(
+        "root/0/0",
+        { kind: "file", path: "Button.tsx" },
+        {
+          expanded: true,
+          children: { status: "loading" },
+        },
+      ),
+    };
+    expect(pendingLoads(left)).toEqual([]);
+    expect(pendingLoads(restoreTree(left))).toEqual([{ id: "root/0/0", path: "Button.tsx" }]);
   });
 });

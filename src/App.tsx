@@ -4,6 +4,7 @@ import { PAGE_FILE_NAME, scanRepository } from "./fs/scanPages.ts";
 import { addRecentPath, loadRecentPaths, saveRecentPaths } from "./fs/recentStore.ts";
 import { filterPaths, splitRecent, type PathMatch } from "./search/filterPaths.ts";
 import { ComponentGraph } from "./graph/ComponentGraph.tsx";
+import type { Tree } from "./graph/tree.ts";
 import "./App.css";
 
 // Rendering thousands of rows at once makes typing sluggish.
@@ -31,6 +32,10 @@ function App() {
   const [recentPaths, setRecentPaths] = useState<string[]>([]);
   // The page whose graph is shown full-width, hiding the list.
   const [openPath, setOpenPath] = useState<string | null>(null);
+  // The graphs left by following `<Navigate>`s, most recent last, to go back to.
+  const [graphHistory, setGraphHistory] = useState<{ path: string; tree: Tree }[]>([]);
+  // The tree to show `openPath` with when coming back to it.
+  const [restoredTree, setRestoredTree] = useState<Tree | undefined>();
   const deferredQuery = useDeferredValue(query);
 
   useEffect(() => {
@@ -54,7 +59,7 @@ function App() {
   async function scan(handle: FileSystemDirectoryHandle) {
     setFolder({ status: "scanning", handle });
     setRecentPaths([]);
-    setOpenPath(null);
+    closeGraph();
     try {
       const { pages: paths, packageDirs } = await scanRepository(handle);
       setFolder({ status: "ready", handle, paths, packageDirs });
@@ -91,7 +96,28 @@ function App() {
     const recent = addRecentPath(recentPaths, path);
     setRecentPaths(recent);
     setOpenPath(path);
+    setGraphHistory([]);
+    setRestoredTree(undefined);
     saveRecentPaths(recent);
+  }
+
+  function followNavigate(path: string, tree: Tree) {
+    const history = [...graphHistory, { path: openPath!, tree }];
+    openPage(path);
+    setGraphHistory(history);
+  }
+
+  function goBack() {
+    const previous = graphHistory[graphHistory.length - 1];
+    setGraphHistory(graphHistory.slice(0, -1));
+    setOpenPath(previous.path);
+    setRestoredTree(previous.tree);
+  }
+
+  function closeGraph() {
+    setOpenPath(null);
+    setGraphHistory([]);
+    setRestoredTree(undefined);
   }
 
   const paths = folder.status === "ready" ? folder.paths : NO_PATHS;
@@ -138,11 +164,17 @@ function App() {
 
       {folder.status === "ready" && openPath && (
         <ComponentGraph
-          key={openPath}
+          // Remounts for each graph shown, even the same page twice in a row.
+          key={`${graphHistory.length}:${openPath}`}
           root={folder.handle}
           packageDirs={folder.packageDirs}
+          pages={folder.paths}
           path={openPath}
-          onBack={() => setOpenPath(null)}
+          initialTree={restoredTree}
+          previousPath={graphHistory[graphHistory.length - 1]?.path}
+          onBack={closeGraph}
+          onPrevious={goBack}
+          onFollow={followNavigate}
         />
       )}
 
