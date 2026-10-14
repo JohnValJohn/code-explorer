@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { loadRootHandle, saveRootHandle } from "./fs/handleStore.ts";
 import { PAGE_FILE_NAME, scanPages } from "./fs/scanPages.ts";
+import { loadSelectedPath, saveSelectedPath } from "./fs/selectionStore.ts";
 import { filterPaths, type PathMatch } from "./search/filterPaths.ts";
 import { PageComponents } from "./components/PageComponents.tsx";
 import "./App.css";
@@ -48,6 +49,8 @@ function App() {
     try {
       const paths = await scanPages(handle);
       setFolder({ status: "ready", handle, paths });
+      const savedPath = loadSelectedPath();
+      if (savedPath !== null && paths.includes(savedPath)) setSelectedPath(savedPath);
     } catch (error) {
       setFolder({ status: "error", message: String(error) });
     }
@@ -57,6 +60,7 @@ function App() {
     try {
       const handle = await window.showDirectoryPicker!({ id: "code-explorer", mode: "read" });
       await saveRootHandle(handle);
+      saveSelectedPath(null);
       setQuery("");
       await scan(handle);
     } catch (error) {
@@ -72,8 +76,16 @@ function App() {
     }
   }
 
+  function selectPath(path: string | null) {
+    setSelectedPath(path);
+    saveSelectedPath(path);
+  }
+
   const paths = folder.status === "ready" ? folder.paths : NO_PATHS;
-  const matches = useMemo(() => filterPaths(paths, deferredQuery), [paths, deferredQuery]);
+  const matches = useMemo(
+    () => filterPaths(paths, deferredQuery, selectedPath),
+    [paths, deferredQuery, selectedPath],
+  );
 
   if (!isSupported) {
     return (
@@ -133,7 +145,7 @@ function App() {
                     type="button"
                     className="result"
                     aria-pressed={match.path === selectedPath}
-                    onClick={() => setSelectedPath(match.path)}
+                    onClick={() => selectPath(match.path)}
                   >
                     <HighlightedPath match={match} />
                   </button>
@@ -145,7 +157,7 @@ function App() {
                 key={selectedPath}
                 root={folder.handle}
                 path={selectedPath}
-                onClose={() => setSelectedPath(null)}
+                onClose={() => selectPath(null)}
               />
             )}
           </div>

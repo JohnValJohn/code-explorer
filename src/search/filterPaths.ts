@@ -7,12 +7,21 @@ export interface PathMatch {
 
 /**
  * Case-insensitive substring match on the full path. An empty (or
- * whitespace-only) query returns every path unhighlighted.
+ * whitespace-only) query returns every path unhighlighted, with `pinned`
+ * moved to the top when it's one of them.
  */
-export function filterPaths(paths: readonly string[], query: string): PathMatch[] {
+export function filterPaths(
+  paths: readonly string[],
+  query: string,
+  pinned?: string | null,
+): PathMatch[] {
   const needle = query.trim().toLowerCase();
   if (needle === "") {
-    return paths.map((path) => ({ path, start: -1, end: -1 }));
+    const ordered =
+      pinned != null && paths.includes(pinned)
+        ? [pinned, ...paths.filter((path) => path !== pinned)]
+        : paths;
+    return ordered.map((path) => ({ path, start: -1, end: -1 }));
   }
 
   const matches: PathMatch[] = [];
