@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { loadRootHandle, saveRootHandle } from "./fs/handleStore.ts";
 import { PAGE_FILE_NAME, scanPages } from "./fs/scanPages.ts";
 import { filterPaths, type PathMatch } from "./search/filterPaths.ts";
-import { PageImports } from "./imports/PageImports.tsx";
+import { PageComponents } from "./components/PageComponents.tsx";
 import "./App.css";
 
 // Rendering thousands of rows at once makes typing sluggish.
@@ -141,7 +141,7 @@ function App() {
               ))}
             </ul>
             {selectedPath && (
-              <PageImports
+              <PageComponents
                 key={selectedPath}
                 root={folder.handle}
                 path={selectedPath}

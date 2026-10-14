@@ -129,7 +129,7 @@ button:hover {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  .imports {
+  .components {
     position: sticky;
     top: 12px;
     max-height: calc(100vh - 24px);
@@ -137,12 +137,12 @@ button:hover {
   }
 }
 
-.imports {
+.components {
   border: 1px solid var(--border);
   border-radius: 8px;
 }
 
-.imports-header {
+.components-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -151,55 +151,55 @@ button:hover {
   border-bottom: 1px solid var(--border);
 }
 
-.imports-header h2 {
+.components-header h2 {
   margin: 0;
   font: 600 14px/1.4 var(--mono);
   color: var(--text-h);
   overflow-wrap: anywhere;
 }
 
-.imports .notice {
+.components .notice {
   margin: 12px;
 }
 
-.import-list {
+.component-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.import-list li {
+.component-list li {
   padding: 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.import-list li + li {
+.component-list li + li {
   border-top: 1px solid var(--border);
 }
 
-.import-source {
+.component-row {
   display: flex;
   align-items: baseline;
   gap: 6px;
   flex-wrap: wrap;
 }
 
-.import-source code {
+.component-row code {
   font: 14px/1.4 var(--mono);
   overflow-wrap: anywhere;
 }
 
-.import-source .package {
-  color: var(--accent);
-}
-
-.import-source .local {
+.component-row .local {
   color: var(--text-h);
 }
 
-.import-names {
+.component-source.package {
+  color: var(--accent);
+}
+
+.component-source {
   font: 13px/1.4 var(--mono);
   overflow-wrap: anywhere;
 }
